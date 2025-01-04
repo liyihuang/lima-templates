@@ -12,13 +12,11 @@ images:
 - location: "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-arm64.img"
   arch: "aarch64"
 
-cpus: 4
-memory: "10GiB"
+cpus: 12
+memory: "16GiB"
 
 networks:
-  - lima: user-v2
-  - lima: shared
-    macAddress: de:ad:be:ef:00:01
+- vzNAT: true
 
 mountType: "virtiofs"
 mounts:
@@ -64,30 +62,7 @@ provision:
     mount bpffs -t bpf /sys/fs/bpf
     mount --make-shared /sys/fs/bpf
     mount --make-shared /sys/fs/cgroup
-- mode: system
-  script: |
-    # for kitty terminal
-    echo 'Defaults env_keep += "TERM TERMINFO"' > /etc/sudoers.d/preserve-terminfo
-- mode: system
-  script: |
-    apt-get update
-    apt-get install -y apt-transport-https ca-certificates curl
 
-    # kubernetes key and repo
-    sudo curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg https://packages.cloud.google.com/apt/doc/apt-key.gpg
-    echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
-    # helm key and report
-    curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
-
-    # install kubectl and helm
-    apt-get update
-    apt-get install -y kubectl helm
-
-    # install KIND
-    curl -fsSLo ./kind https://kind.sigs.k8s.io/dl/v0.14.0/kind-linux-$(dpkg --print-architecture)
-    chmod +x ./kind
-    mv ./kind /usr/local/bin/kind
 
 - mode: system
   script: |
@@ -95,22 +70,27 @@ provision:
     if [[ -f /.cilium-setup ]]; then
       exit 0
     fi
+    snap install kubectl --classic 
+    snap install helm --classic 
+    snap install go --classic
+    echo 'export PATH=$PATH:$HOME/go/bin' >> {{.Home}}/.bashrc
     apt-get update
-    apt-get install -y build-essential make libtinfo5 clang-11
+    apt-get install -y build-essential make curl
+    bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"
+    ln -s /bin/clang-18 /usr/local/bin/clang
 
-    ln -s /usr/bin/clang-11 /usr/bin/clang
-    ln -s /usr/bin/llc-11 /usr/bin/llc
+    CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+    CLI_ARCH=amd64
+    if [ "$(uname -m)" = "aarch64" ]; then CLI_ARCH=arm64; fi
+    curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${CLI_ARCH}.tar.gz
+    sudo tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz /usr/local/bin
+    rm cilium-linux-${CLI_ARCH}.tar.gz
 
-    cd /tmp
-    wget https://go.dev/dl/go1.21.4.linux-arm64.tar.gz
-    rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.4.linux-arm64.tar.gz
-
-    echo 'export PATH=/usr/local/go/bin:$PATH' >> {{.Home}}/.bashrc
-
-    export PATH=$PATH:/usr/local/go/bin
-    go install github.com/mattn/goveralls@a36c7ef8f23b2952fa6e39663f52107dfc8ad69d
-    go install github.com/mfridman/tparse@28967170dce4f9f13de77ec857f7aed4c4294a5f
-
+    go install github.com/onsi/ginkgo/ginkgo@v1.16.5
+    go install github.com/mfridman/tparse@latest
+    go install sigs.k8s.io/kind@latest
+    go install github.com/go-delve/delve/cmd/dlv@latest
+    curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.63.0
     touch /.cilium-setup
 
 probes:
